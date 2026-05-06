@@ -1,9 +1,10 @@
+mod config;
 mod gringotts;
 mod routes;
 mod session;
 mod state;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use clap::Parser;
 use tokio::time::Duration;
@@ -14,19 +15,36 @@ use state::AppState;
 /// Remote gateway to a gringotts encrypted file.
 ///
 /// The API is intentionally plain HTTP — secure it via an SSH tunnel.
+/// Folder mappings restrict which directories can be accessed via the API.
 ///
 /// Example:
-///   rgringotts -p 7979 -h 127.0.0.1
+///   rgringotts -p 7979 -h 127.0.0.1 -f mydata=/home/user/.gringotts
 #[derive(Parser)]
-#[command(name = "rgringotts", disable_help_flag = true)]
+#[command(name = "rgringotts")]
 struct Cli {
-    /// TCP port to listen on (default 7979).
-    #[arg(short = 'p', long = "port", default_value_t = 7979)]
-    port: u16,
+    /// Path to a TOML configuration file.
+    /// Defaults to `./rgringotts.toml` if it exists.
+    #[arg(short = 'c', long = "config", value_name = "FILE")]
+    config: Option<PathBuf>,
 
-    /// Host / IP address to bind to (default 127.0.0.1).
-    #[arg(short = 'h', long = "host", default_value = "127.0.0.1")]
-    host: String,
+    /// TCP port to listen on (overrides config file).
+    #[arg(short = 'p', long = "port", value_name = "PORT")]
+    port: Option<u16>,
+
+    /// Host / IP address to bind to (overrides config file).
+    #[arg(short = 'h', long = "host", value_name = "HOST")]
+    host: Option<String>,
+
+    /// Add a folder mapping NAME=/path/to/dir (repeatable, merges with config file).
+    /// Clients use `NAME:///filename` as the file specifier in API calls.
+    #[arg(short = 'f', long = "folder", value_name = "NAME=PATH")]
+    folders: Vec<String>,
+}
+
+fn parse_folder_arg(s: &str) -> Result<(String, PathBuf), String> {
+    s.find('=')
+        .map(|i| (s[..i].to_owned(), PathBuf::from(&s[i + 1..])))
+        .ok_or_else(|| format!("Expected NAME=PATH, got '{s}'"))
 }
 
 #[tokio::main]
@@ -39,7 +57,62 @@ async fn main() {
         .init();
 
     let cli = Cli::parse();
-    let state = Arc::new(AppState::new());
+
+    // 1. Start with an empty config.
+    let mut cfg = config::Config::default();
+
+    // 2. Load the config file (explicit path, or default ./rgringotts.toml).
+    let cfg_path = cli
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("rgringotts.toml"));
+
+    if cfg_path.exists() {
+        match config::Config::load(&cfg_path) {
+            Ok(file_cfg) => cfg.merge(file_cfg),
+            Err(e) => {
+                eprintln!("Error loading config: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else if cli.config.is_some() {
+        eprintln!("Config file not found: {}", cfg_path.display());
+        std::process::exit(1);
+    }
+
+    // 3. CLI overrides.
+    if let Some(p) = cli.port {
+        cfg.port = Some(p);
+    }
+    if let Some(h) = cli.host {
+        cfg.host = Some(h);
+    }
+    let mut cli_folders: HashMap<String, PathBuf> = HashMap::new();
+    for raw in &cli.folders {
+        match parse_folder_arg(raw) {
+            Ok((name, path)) => {
+                cli_folders.insert(name, path);
+            }
+            Err(e) => {
+                eprintln!("Invalid --folder argument: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    cfg.folders.extend(cli_folders);
+
+    let port = cfg.port.unwrap_or(7979);
+    let host = cfg.host.as_deref().unwrap_or("127.0.0.1").to_owned();
+
+    if cfg.folders.is_empty() {
+        tracing::warn!("No folder mappings configured — any absolute path can be opened.");
+    } else {
+        for (name, path) in &cfg.folders {
+            tracing::info!("Folder mapping: {name} → {}", path.display());
+        }
+    }
+
+    let state = Arc::new(AppState::new(cfg.folders));
 
     // Background task: evict sessions that have exceeded the 30-second timeout.
     {
@@ -55,7 +128,7 @@ async fn main() {
 
     let app = routes::build_router(state);
 
-    let addr: SocketAddr = format!("{}:{}", cli.host, cli.port)
+    let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .expect("Invalid bind address");
 

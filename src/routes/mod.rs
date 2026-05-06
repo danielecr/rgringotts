@@ -8,10 +8,14 @@ use std::sync::Arc;
 use crate::state::AppState;
 
 mod entries;
+mod folders;
 mod session;
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
+        // Folder discovery
+        .route("/folders", get(folders::list_folders))
+        .route("/folders/{name}", get(folders::list_files))
         // Session lifecycle
         .route("/api/session/open", post(session::open))
         .route("/api/session", delete(session::close))

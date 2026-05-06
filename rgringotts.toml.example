@@ -1,0 +1,28 @@
+# rgringotts.toml — example configuration
+#
+# Copy this file to rgringotts.toml (next to the binary, or pass -c /path/to/file).
+# CLI flags override the values here; --folder entries are merged with [folders].
+
+# TCP port to listen on (default: 7979).
+port = 7979
+
+# IP address / hostname to bind to (default: 127.0.0.1).
+# Keep this on loopback and use an SSH tunnel for remote access.
+host = "127.0.0.1"
+
+# ---------------------------------------------------------------------------
+# Folder mappings
+#
+# Each entry exposes a local directory under an alias name.
+# Clients address files as  alias:///filename  in API calls.
+# Path traversal (..) is always rejected by the server.
+#
+# When this section is absent (or empty) the service falls back to accepting
+# raw absolute paths — useful for local testing but not recommended otherwise.
+# ---------------------------------------------------------------------------
+
+[folders]
+# alias = "/absolute/path/to/directory"
+mydata  = "/home/user/.gringotts"
+archive = "/mnt/backup/gringotts"
+work    = "/home/user/Documents/sensitive"
