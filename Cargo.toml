@@ -16,3 +16,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 quick-xml = "0.37"
 thiserror = "2"
 zeroize = "1"
+toml = "0.8"

@@ -25,7 +25,11 @@ pub struct OpenResponse {
 
 /// `POST /api/session/open`
 ///
-/// Body: `{ "file": "/path/to/file.grg", "passphrase": "secret" }`
+/// Body: `{ "file": "foldername:///filename", "passphrase": "secret" }`
+///
+/// The `file` field uses the `name:///filename` format to address a file
+/// inside a configured folder mapping.  When no folders are configured the
+/// field may be a raw absolute path (backward-compatible mode).
 ///
 /// Decrypts the gringotts file, stores the entries in memory and returns a
 /// bearer token.  The session expires after 30 s of inactivity.
@@ -33,15 +37,22 @@ pub async fn open(
     State(state): State<Arc<AppState>>,
     Json(req): Json<OpenRequest>,
 ) -> Result<(StatusCode, Json<OpenResponse>), (StatusCode, String)> {
-    let file = req.file.clone();
-    let pwd = req.passphrase.clone();
+    // Resolve the file specifier through the folder map.
+    let file_path = state
+        .resolve_file(&req.file)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+        .to_string_lossy()
+        .into_owned();
 
-    let entries = tokio::task::spawn_blocking(move || gringotts::load_file(&file, &pwd))
+    let pwd = req.passphrase.clone();
+    let file_for_spawn = file_path.clone();
+
+    let entries = tokio::task::spawn_blocking(move || gringotts::load_file(&file_for_spawn, &pwd))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
 
-    let token = state.sessions.create(req.file, req.passphrase, entries);
+    let token = state.sessions.create(file_path, req.passphrase, entries);
     Ok((StatusCode::CREATED, Json(OpenResponse { token })))
 }
 
