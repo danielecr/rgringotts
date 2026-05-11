@@ -98,6 +98,9 @@ pub fn load_file(file_path: &str, passphrase: &str) -> Result<Vec<Entry>, Gringo
 /// All unsafe calls are wrapped here.
 pub fn save_file(file_path: &str, passphrase: &str, entries: &[Entry]) -> Result<(), GringottsError> {
     let xml = serialize_xml(entries);
+    // libgringotts cannot encrypt a zero-length buffer (returns GRG_WRITE_ERR).
+    // Use a single newline as the minimum payload for empty vaults.
+    let xml = if xml.is_empty() { "\n".to_owned() } else { xml };
     let path = CString::new(file_path).map_err(|_| GringottsError::InvalidPath)?;
     let pwd = passphrase.as_bytes();
 
