@@ -2,6 +2,58 @@
 
 Clever or idiot, this is it: a service providing access to your remote secret file via an API
 
+## Setup
+
+### Prerequisites
+
+| Tool | Notes |
+|------|-------|
+| Rust + Cargo (stable) | Install via [rustup.rs](https://rustup.rs) |
+| C toolchain (`gcc`/`clang`) | macOS: `xcode-select --install` · Linux: `build-essential` |
+| libgringotts | Installed by `setup.sh` (see below) |
+
+### Install libgringotts
+
+`libgringotts` is a C library not available in most package managers.
+The provided `setup.sh` script detects your OS and installs it automatically.
+
+**macOS**
+```bash
+./setup.sh
+```
+Requires [Homebrew](https://brew.sh). Installs `autoconf`, `automake`, `libmcrypt` via Homebrew, then builds `libmhash` and `libgringotts` from source into `/usr/local`.
+
+**Linux**
+```bash
+./setup.sh
+```
+Tries the native package manager first (`apt`, `dnf`, `zypper`, `pacman`).
+Falls back to building from source if the package is not available.
+
+**Linux / macOS — non-standard prefix (no sudo)**
+```bash
+LIBGRINGOTTS_PREFIX=$HOME/.local ./setup.sh
+export LIBGRINGOTTS_DIR=$HOME/.local   # also add to ~/.bashrc or ~/.zshrc
+```
+
+**Windows**
+```powershell
+# From an elevated PowerShell prompt:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+Requires [WSL2](https://learn.microsoft.com/windows/wsl/install) **or** [MSYS2](https://www.msys2.org/).
+If neither is present the script prints step-by-step instructions.
+
+### Build
+
+```bash
+cargo build --release
+```
+
+The `LIBGRINGOTTS_DIR` environment variable, if set, is passed directly to the
+linker as an additional library search path (handled in `build.rs`).
+
 ## How to
 
 1. The service publish a REST API to access data, via libgringotts.
@@ -19,6 +71,54 @@ rgringotts -p 7978 -h localhost \
 ```
 
 Since it is on localhost, ssh tunnel is required to attach it. Be aware: stop the service when you have done.
+
+## Docker
+
+The recommended way to build and deploy rgringotts is Docker. This avoids installing
+libgringotts and its dependencies (libmcrypt, libmhash) on your machine — Debian has
+them all in apt.
+
+### Build the image
+
+```bash
+./docker-build.sh              # build image + extract Linux binary to dist/rgringotts
+./docker-build.sh --image-only # build image only
+```
+
+### Run with a local folder of encrypted files
+
+Mount a local directory into the container and map it as a named folder:
+
+```bash
+docker run -d \
+  --name rgringotts \
+  -p 127.0.0.1:7979:7979 \
+  -v "$HOME/.gringotts:/data:ro" \
+  rgringotts \
+  rgringotts --host 0.0.0.0 --port 7979 --folder mydata=/data
+```
+
+| Flag | Meaning |
+|---|---|
+| `-v "$HOME/.gringotts:/data:ro"` | Mounts your local `~/.gringotts` directory read-only into `/data` inside the container |
+| `--folder mydata=/data` | Exposes it to the API under the name `mydata` |
+| `-p 127.0.0.1:7979:7979` | Binds the port to localhost only — use an SSH tunnel to reach it remotely |
+
+Stop it with: `docker stop rgringotts && docker rm rgringotts`
+
+### Multiple folders
+
+```bash
+docker run -d \
+  --name rgringotts \
+  -p 127.0.0.1:7979:7979 \
+  -v "$HOME/.gringotts:/data/main:ro" \
+  -v "/mnt/backup/gringotts:/data/archive:ro" \
+  rgringotts \
+  rgringotts --host 0.0.0.0 --port 7979 \
+             --folder main=/data/main \
+             --folder archive=/data/archive
+```
 
 ## Configuration
 

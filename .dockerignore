@@ -1,0 +1,6 @@
+target/
+dist/
+client/node_modules/
+client/dist/
+.git/
+*.md
