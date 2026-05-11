@@ -1,0 +1,193 @@
+name: Release server
+
+on:
+  push:
+    tags: ["v[0-9]+.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. v1.0.0)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── .deb (Debian / Ubuntu) ─────────────────────────────────────────────────
+  deb:
+    name: Build .deb
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libgringotts-dev libmcrypt-dev libmhash-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Build .deb
+        run: cargo deb --no-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: target/debian/*.deb
+
+  # ── .rpm (Fedora / Rocky / RHEL) ───────────────────────────────────────────
+  rpm:
+    name: Build .rpm
+    runs-on: ubuntu-22.04
+    container:
+      image: fedora:40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          dnf install -y \
+            pkg-config gcc make automake autoconf libtool \
+            libmcrypt-devel mhash-devel \
+            git curl
+
+      - name: Build libgringotts from source
+        run: |
+          git clone --depth 1 https://github.com/shlomif/gringotts.git /tmp/gringotts
+          cd /tmp/gringotts
+          autoreconf -fi
+          ./configure --prefix=/usr
+          make -j$(nproc)
+          make install
+          ldconfig
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked
+
+      - name: Build .rpm
+        run: cargo generate-rpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: target/generate-rpm/*.rpm
+
+  # ── .tar.gz tarball (generic Linux x86_64) ─────────────────────────────────
+  tarball:
+    name: Build tarball
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libgringotts-dev libmcrypt-dev libmhash-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          DIRNAME="rgringotts-${VERSION}-linux-x86_64"
+          mkdir -p "dist/${DIRNAME}"
+          cp target/release/rgringotts "dist/${DIRNAME}/"
+          cp rgringotts.toml.example   "dist/${DIRNAME}/"
+          cp README.md                 "dist/${DIRNAME}/"
+          tar -czf "dist/${DIRNAME}.tar.gz" -C dist "${DIRNAME}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: dist/*.tar.gz
+
+  # ── ARM64 tarball (Raspberry Pi, Graviton) ──────────────────────────────────
+  tarball-arm64:
+    name: Build tarball (arm64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compilation deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu pkg-config
+
+      - name: Install system deps (native, for build.rs only)
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libgringotts-dev libmcrypt-dev libmhash-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary (arm64)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          # pkg-config cannot cross-probe; point at native headers as approximation
+          PKG_CONFIG_ALLOW_CROSS: "1"
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+
+      - name: Package tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          DIRNAME="rgringotts-${VERSION}-linux-arm64"
+          mkdir -p "dist/${DIRNAME}"
+          cp target/aarch64-unknown-linux-gnu/release/rgringotts "dist/${DIRNAME}/"
+          cp rgringotts.toml.example "dist/${DIRNAME}/"
+          cp README.md               "dist/${DIRNAME}/"
+          tar -czf "dist/${DIRNAME}.tar.gz" -C dist "${DIRNAME}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-arm64
+          path: dist/*.tar.gz
+
+  # ── GitHub Release ──────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [deb, rpm, tarball, tarball-arm64]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.tag }}
+          draft: true
+          generate_release_notes: true
+          files: artifacts/**

@@ -2,6 +2,24 @@
 name = "rgringotts"
 version = "0.1.0"
 edition = "2024"
+description = "Encrypted vault REST server backed by libgringotts"
+license = "MIT"
+authors = ["Daniele"]
+
+[package.metadata.deb]
+section = "utils"
+priority = "optional"
+depends = "libgringotts2, libmcrypt4, libmhash2"
+assets = [
+  ["target/release/rgringotts", "usr/local/bin/rgringotts", "755"],
+  ["rgringotts.toml.example", "etc/rgringotts/rgringotts.toml.example", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/rgringotts", dest = "/usr/local/bin/rgringotts", mode = "0755" },
+  { source = "rgringotts.toml.example", dest = "/etc/rgringotts/rgringotts.toml.example", mode = "0644" },
+]
 
 [dependencies]
 axum = "0.8"

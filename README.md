@@ -2,6 +2,8 @@
 
 Clever or idiot, this is it: a service providing access to your remote secret file via an API
 
+See [to_serve_or_not_to_serve.md](to_serve_or_not_to_serve.md)
+
 ## Setup
 
 ### Prerequisites
